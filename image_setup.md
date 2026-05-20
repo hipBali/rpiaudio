@@ -146,10 +146,10 @@ Before shutting down, we must enable the IP-less local hostname service and tell
 
 ---
 
-## Bonus: Szuper-Hülyebiztos Wi-Fi Automation Setup
+## Bonus: Wi-Fi Automation Setup
 To allow end-users to change Wi-Fi settings on a PC without touching native configuration files, create these two files directly in the root folder of the **64MB boot SD card**.
 
-### File 1: `wifi_beallitas.txt` (User Interface)
+### File 1: `wifi_setup.txt` (User Interface)
 ```text
 # THE HOME WI-FI NETWORK NAME
 WIFI_NEV="Your_Wifi_Name"
@@ -164,7 +164,7 @@ IP_CIM=AUTO
 ### File 2: `Automation_Custom_PreScript.sh` (Background Processor)
 ```bash
 #!/bin/bash
-source /boot/firmware/wifi_beallitas.txt 2>/dev/null || source /boot/wifi_beallitas.txt
+source /boot/firmware/wifi_setup.txt 2>/dev/null || source /boot/wifi_setup.txt
 
 D_TXT="/boot/firmware/dietpi.txt"; [ ! -f "$D_TXT" ] && D_TXT="/boot/dietpi.txt"
 W_TXT="/boot/firmware/dietpi-wifi.txt"; [ ! -f "$W_TXT" ] && W_TXT="/boot/dietpi-wifi.txt"
