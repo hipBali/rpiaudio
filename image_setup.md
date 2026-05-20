@@ -1,7 +1,7 @@
-# DietPi OS Cloning & Dual-Storage Setup Guide
+# DietPi OS Cloning, Dual-Storage & Zero-IP Wi-Fi Guide
 ### For Raspberry Pi Zero 1 and Raspberry Pi Zero 2
 
-This guide explains how to clone an active, fully configured DietPi system from a temporary SD card to a small 6GB system partition on an external SSD. The setup uses a small dedicated MicroSD card (e.g., 64MB) solely for booting, leaving the rest of the SSD (~232GB) as a separate exFAT partition for MPD server music files.
+This guide explains how to clone an active DietPi system to a small 6GB SSD partition, use a 64MB MicroSD card for booting, set up a 232GB exFAT partition for MPD music, and implement a **Zero-IP Wi-Fi automation** that allows mobile clients to connect via `dietpi.local` without knowing the IP address.
 
 ---
 
@@ -14,7 +14,7 @@ This guide explains how to clone an active, fully configured DietPi system from 
 ---
 
 ## Step 1: Prepare the 64MB Boot SD Card (On Windows/PC)
-Since the Pi will read initial boot files from the 64MB card but run the OS from the SSD, we must prepare this card on your PC.
+Since the Pi reads initial boot files from the 64MB card but runs the OS from the SSD, we must prepare this card on your PC.
 
 1. Format the 64MB MicroSD card to **FAT (FAT16)**. Name the volume label `boot`.
 2. Copy all files from your working temporary SD card's boot partition directly to the root of this 64MB card.
@@ -85,14 +85,19 @@ Create a clean Linux file system on the 6GB partition and copy your live system 
 
 ---
 
-## Step 4: Update the File System Table (On the Pi via SSH)
-Before shutting down, the cloned operating system must be told where to mount its components upon the next startup.
+## Step 4: Install mDNS & Update the File System Table (On the Pi via SSH)
+Before shutting down, we must enable the IP-less local hostname service and tell the cloned OS where to mount its components.
 
-1. Open the file system table of the cloned OS located on the SSD:
+1. **Install Avahi for `dietpi.local` hostname support:**
+   ```bash
+   apt update && apt install avahi-daemon -y
+   systemctl enable --now avahi-daemon
+   ```
+2. Open the file system table of the cloned OS located on the SSD:
    ```bash
    nano /mnt/target/etc/fstab
    ```
-2. Modify the main entries to match the new hardware mapping:
+3. Modify the main entries to match the new hardware mapping:
    * **The Root Line (`/`):** Change the source to `/dev/sda1` for both Pi models:
      ```text
      /dev/sda1 / ext4 noatime,lazytime,rw 0 1
@@ -106,8 +111,8 @@ Before shutting down, the cloned operating system must be told where to mount it
        ```text
        PARTUUID=xxxxxx-01 /boot/firmware vfat noatime,lazytime,rw 0 2
        ```
-3. Save and exit (**Ctrl+O**, **Enter**, **Ctrl+X**).
-4. Unmount the target folder and cleanly shut down the Pi:
+4. Save and exit (**Ctrl+O**, **Enter**, **Ctrl+X**).
+5. Unmount the target folder and cleanly shut down the Pi:
    ```bash
    umount /mnt/target
    poweroff
@@ -118,7 +123,7 @@ Before shutting down, the cloned operating system must be told where to mount it
 ## Step 5: First Boot and Music Storage Setup
 1. Remove the temporary setup SD card from the Pi.
 2. Insert your modified **64MB boot SD card**. Ensure the SSD is connected to the microUSB **Data** port. Power on the Pi.
-3. Once the Pi boots up and appears on the network, log back in via SSH as `root`.
+3. Once the Pi boots up and appears on the network, log back in via SSH using `root@dietpi.local` (No IP needed!).
 4. Run `fdisk` once more to allocate the remaining ~232GB of unallocated space for your music files:
    ```bash
    fdisk /dev/sda
@@ -133,15 +138,54 @@ Before shutting down, the cloned operating system must be told where to mount it
    mkfs.exfat /dev/sda2
    ```
 7. Reboot the Pi. The automated DietPi background system will cleanly mount it under `/media/usb0`.
+8. Link the music storage to the MPD directory:
+   ```bash
+   ln -s /media/usb0 /var/lib/mpd/music/SSD_Music
+   dietpi-services start
+   ```
 
 ---
 
-## Step 6: Link to MPD Server
-To feed your massive music library smoothly into the Music Player Daemon without editing system configuration files, create a symlink:
+## Bonus: Szuper-Hülyebiztos Wi-Fi Automation Setup
+To allow end-users to change Wi-Fi settings on a PC without touching native configuration files, create these two files directly in the root folder of the **64MB boot SD card**.
 
-```bash
-ln -s /media/usb0 /var/lib/mpd/music/SSD_Music
-dietpi-services start
+### File 1: `wifi_beallitas.txt` (User Interface)
+```text
+# THE HOME WI-FI NETWORK NAME
+WIFI_NEV="Your_Wifi_Name"
+
+# THE WI-FI PASSWORD
+WIFI_JELSZO="Your_Wifi_Password"
+
+# IP ADDRESS CONFIGURATION (Type AUTO or a static IP like 192.168.1.100)
+IP_CIM=AUTO
 ```
 
-*Everything is ready! You can now unplug the SSD anytime, plug it into your Windows/Mac PC to transfer gigabytes of music files instantly, plug it back into the Pi, and run a **Database Update** inside your MPD client application!*
+### File 2: `Automation_Custom_PreScript.sh` (Background Processor)
+```bash
+#!/bin/bash
+source /boot/firmware/wifi_beallitas.txt 2>/dev/null || source /boot/wifi_beallitas.txt
+
+D_TXT="/boot/firmware/dietpi.txt"; [ ! -f "$D_TXT" ] && D_TXT="/boot/dietpi.txt"
+W_TXT="/boot/firmware/dietpi-wifi.txt"; [ ! -f "$W_TXT" ] && W_TXT="/boot/dietpi-wifi.txt"
+
+if [ -f "$D_TXT" ] && [ -f "$W_TXT" ]; then
+    sed -i "s/^AUTO_SETUP_NET_ETHERNET_ENABLED=.*/AUTO_SETUP_NET_ETHERNET_ENABLED=0/" "$D_TXT"
+    sed -i "s/^AUTO_SETUP_NET_WIFI_ENABLED=.*/AUTO_SETUP_NET_WIFI_ENABLED=1/" "$D_TXT"
+
+    if [ "$IP_CIM" = "AUTO" ] || [ -z "$IP_CIM" ]; then
+        sed -i "s/^AUTO_SETUP_NET_USESTATIC=.*/AUTO_SETUP_NET_USESTATIC=0/" "$D_TXT"
+    else
+        CALC_GW=$(echo "$IP_CIM" | awk -F. '{print $1"."$2"."$3".1"}')
+        sed -i "s/^AUTO_SETUP_NET_USESTATIC=.*/AUTO_SETUP_NET_USESTATIC=1/" "$D_TXT"
+        sed -i "s/^AUTO_SETUP_NET_STATIC_IP=.*/AUTO_SETUP_NET_STATIC_IP=$IP_CIM/" "$D_TXT"
+        sed -i "s/^AUTO_SETUP_NET_STATIC_MASK=.*/AUTO_SETUP_NET_STATIC_MASK=255.255.255.0/" "$D_TXT"
+        sed -i "s/^AUTO_SETUP_NET_STATIC_GATEWAY=.*/AUTO_SETUP_NET_STATIC_GATEWAY=$CALC_GW/" "$D_TXT"
+        sed -i "s/^AUTO_SETUP_NET_STATIC_DNS=.*/AUTO_SETUP_NET_STATIC_DNS=1.1.1.1/" "$D_TXT"
+    fi
+
+    sed -i "s/^aWIFI_SSID\[0\].*/aWIFI_SSID=$WIFI_NEV/" "$W_TXT"
+    sed -i "s/^aWIFI_KEY\[0\].*/aWIFI_KEY=$WIFI_JELSZO/" "$W_TXT"
+fi
+```
+*Note: This script persists on the boot card and runs during every boot cycle, letting users move the device between networks seamlessly using only `dietpi.local` to connect.*
